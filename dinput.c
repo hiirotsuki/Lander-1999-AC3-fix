@@ -6,10 +6,18 @@
 #define SAM_READONLY    0x00020019u   /* KEY_READ                        */
 #define LANDER_KEY      "SOFTWARE\\Psygnosis\\Studios\\Lander"
 
-#if defined(_GLIDE)
+#if defined(LANDER_GLIDE)
 
 #define SAM_IMM         0x0047AE62u   /* imm32 of PUSH 0x20006 @ 0x0047AE61   */
 #define PATCH_ADDR      0x00461E74u   /* imm32 of MOV [0x5470C0], 0x461B70    */
+
+#if defined(LANDER_NOCD)
+#define CDCHECK_ADDR    0x00415CF0u
+static const unsigned char g_cdcheck[] = {
+    0xB8, 0x01, 0x00, 0x00, 0x00,   /* mov eax, 1 */
+    0xC3                            /* ret        */
+};
+#endif
 
 static const unsigned char g_handler[] = {
     /* 000 */ 0xA1, 0x78, 0xEF, 0x59, 0x00,                            /* mov  eax, [0x59EF78]  ; this->pMediaEventEx */
@@ -87,6 +95,14 @@ static const unsigned char g_handler[] = {
 
 #define SAM_IMM         0x00482402u   /* imm32 of PUSH 0x20006 @ 0x00482401   */
 #define PATCH_ADDR      0x00465AE4u   /* imm32 of MOV [0x5363D8], 0x4657E0    */
+
+#if defined(LANDER_NOCD)
+#define CDCHECK_ADDR    0x00416320u
+static const unsigned char g_cdcheck[] = {
+    0xB8, 0x01, 0x00, 0x00, 0x00,   /* mov eax, 1 */
+    0xC3                            /* ret        */
+};
+#endif
 
 static const unsigned char g_handler[] = {
     /* 000 */ 0xA1, 0x30, 0x13, 0x56, 0x00,                            /* mov  eax, [0x561330]  ; this->pMediaEventEx */
@@ -176,7 +192,8 @@ static BOOL poke(DWORD addr, const void *data, SIZE_T n)
     DWORD old = 0;
 
     if (!VirtualProtect((void *)addr, n, PAGE_EXECUTE_READWRITE, &old))
-		return FALSE;
+        return FALSE;
+
     copy_bytes((void *)addr, data, n);
     VirtualProtect((void *)addr, n, old, &old);
     return TRUE;
@@ -193,7 +210,7 @@ static DWORD probe_regsam(void)
     HKEY key = NULL;
 
     if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, LANDER_KEY, 0, SAM_READWRITE, &key) == ERROR_SUCCESS)
-	{
+    {
         RegCloseKey(key);
         return SAM_READWRITE;
     }
@@ -207,11 +224,15 @@ static void apply_patches(void)
     poke_dword(SAM_IMM, probe_regsam());
 
     cave = VirtualAlloc(NULL, sizeof(g_handler), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (cave == NULL)
+    if(cave == NULL)
 		return;
 
     copy_bytes(cave, g_handler, sizeof(g_handler));
     poke_dword(PATCH_ADDR, (DWORD)cave);
+
+#if defined(LANDER_NOCD)
+    poke(CDCHECK_ADDR, g_cdcheck, sizeof(g_cdcheck));
+#endif
 }
 
 /* dinput wrapper */
@@ -221,8 +242,8 @@ static PFN_DirectInputCreateA g_real;
 
 HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst, DWORD dwVersion, void **ppDI, void *punkOuter)
 {
-    if (g_real == NULL)
-	{
+    if(g_real == NULL)
+    {
         char path[MAX_PATH];
         UINT n = GetSystemDirectoryA(path, MAX_PATH);
         HMODULE real;
@@ -230,12 +251,12 @@ HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst, DWORD dwVersion, void **ppDI,
         lstrcatA(path, "\\dinput.dll");
 
         real = LoadLibraryA(path);
-        if (real == NULL)
-			return E_FAIL;
+        if(real == NULL)
+            return E_FAIL;
 
         g_real = (PFN_DirectInputCreateA)GetProcAddress(real, "DirectInputCreateA");
-        if (g_real == NULL)
-			return E_FAIL;
+        if(g_real == NULL)
+            return E_FAIL;
     }
     return g_real(hinst, dwVersion, ppDI, punkOuter);
 }
@@ -244,8 +265,8 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
 {
     (void)reserved;
 
-    if (reason == DLL_PROCESS_ATTACH)
-	{
+    if(reason == DLL_PROCESS_ATTACH)
+    {
         DisableThreadLibraryCalls(hinst);
         apply_patches();
     }
